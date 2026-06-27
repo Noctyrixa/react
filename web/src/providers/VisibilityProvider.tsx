@@ -1,64 +1,112 @@
-import React, {
-  Context,
+import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useMemo,
   useState,
-} from "react";
-import { useNuiEvent } from "../hooks/useNuiEvent";
-import { fetchNui } from "../utils/fetchNui";
-import { isEnvBrowser } from "../utils/misc";
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from 'react';
+import { isEnvBrowser } from '../utils/env';
 
-const VisibilityCtx = createContext<VisibilityProviderValue | null>(null);
-
-interface VisibilityProviderValue {
-  setVisible: (visible: boolean) => void;
+interface VisibilityContextValue {
   visible: boolean;
+  setVisible: Dispatch<SetStateAction<boolean>>;
+  shouldHide: boolean;
+  setShouldHide: (hide: boolean) => void;
 }
 
-// This should be mounted at the top level of your application, it is currently set to
-// apply a CSS visibility value. If this is non-performant, this should be customized.
-export const VisibilityProvider: React.FC<{ children: React.ReactNode }> = ({
+const VisibilityContext = createContext<VisibilityContextValue | null>(null);
+
+interface VisibilityProviderProps {
+  children: ReactNode;
+  defaultVisible?: boolean;
+  defaultShouldHide?: boolean;
+  showActions?: string[];
+  hideActions?: string[];
+  hideStateAction?: string;
+}
+
+export function VisibilityProvider({
   children,
-}) => {
-  const [visible, setVisible] = useState(false);
+  defaultVisible = false,
+  defaultShouldHide = !isEnvBrowser(),
+  showActions = [],
+  hideActions = [],
+  hideStateAction,
+}: VisibilityProviderProps) {
+  const [visible, setVisible] = useState(defaultVisible);
+  const [shouldHide, setShouldHide] = useState(defaultShouldHide);
 
-  useNuiEvent<boolean>("setVisible", setVisible);
+  const showActionKey = showActions.join('|');
+  const hideActionKey = hideActions.join('|');
 
-  // Handle pressing escape/backspace
   useEffect(() => {
-    // Only attach listener when we are visible
-    if (!visible) return;
+    const listener = (event: Event) => {
+      const messageEvent = event as MessageEvent<{
+        action?: string;
+        shouldHide?: boolean;
+        hideState?: number;
+      }>;
+      const payload =
+        messageEvent.data ?? (event as CustomEvent<{ action?: string }>).detail;
 
-    const keyHandler = (e: KeyboardEvent) => {
-      if (["Backspace", "Escape"].includes(e.code)) {
-        if (!isEnvBrowser()) fetchNui("hideFrame");
-        else setVisible(!visible);
+      if (!payload?.action) return;
+
+      if (showActions.includes(payload.action)) {
+        setVisible(true);
+      }
+
+      if (hideActions.includes(payload.action)) {
+        setVisible(false);
+      }
+
+      if (hideStateAction && payload.action === hideStateAction) {
+        if (payload.shouldHide !== undefined) {
+          setShouldHide(payload.shouldHide);
+        } else if (payload.hideState !== undefined) {
+          setShouldHide(payload.hideState === 2);
+        }
       }
     };
 
-    window.addEventListener("keydown", keyHandler);
+    window.addEventListener('message', listener);
+    return () => window.removeEventListener('message', listener);
+  }, [hideActionKey, hideStateAction, showActionKey]);
 
-    return () => window.removeEventListener("keydown", keyHandler);
-  }, [visible]);
+  const value = useMemo(
+    () => ({
+      visible,
+      setVisible,
+      shouldHide,
+      setShouldHide,
+    }),
+    [shouldHide, visible],
+  );
 
   return (
-    <VisibilityCtx.Provider
-      value={{
-        visible,
-        setVisible,
-      }}
-    >
-      <div
-        style={{ visibility: visible ? "visible" : "hidden", height: "100%" }}
-      >
-        {children}
-      </div>
-    </VisibilityCtx.Provider>
+    <VisibilityContext.Provider value={value}>{children}</VisibilityContext.Provider>
   );
-};
+}
 
-export const useVisibility = () =>
-  useContext<VisibilityProviderValue>(
-    VisibilityCtx as Context<VisibilityProviderValue>,
-  );
+export function useVisibility() {
+  const context = useContext(VisibilityContext);
+
+  if (!context) {
+    throw new Error('useVisibility must be used within VisibilityProvider');
+  }
+
+  return context;
+}
+
+export function useVisibilityControls() {
+  const { visible, setVisible } = useVisibility();
+
+  const show = useCallback(() => setVisible(true), [setVisible]);
+  const hide = useCallback(() => setVisible(false), [setVisible]);
+  const toggle = useCallback(() => setVisible((current) => !current), [setVisible]);
+
+  return { visible, setVisible, show, hide, toggle };
+}
