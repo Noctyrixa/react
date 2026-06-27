@@ -1,31 +1,12 @@
-import React, { useState } from "react";
-import "./App.css";
-import { debugData } from "../utils/debugData";
-import { fetchNui } from "../utils/fetchNui";
+import { useEffect, useState } from 'react';
+import { NUI_CALLBACKS } from '../constants/events';
+import { useVisibility } from '../providers/VisibilityProvider';
+import { debugData } from '../utils/debugData';
+import { fetchNui } from '../utils/fetchNui';
+import { isEnvBrowser } from '../utils/env';
+import './App.css';
 
-// This will set the NUI to visible if we are
-// developing in browser
-debugData([
-  {
-    action: "setVisible",
-    data: true,
-  },
-]);
-
-interface ReturnClientDataCompProps {
-  data: unknown;
-}
-
-const ReturnClientDataComp: React.FC<ReturnClientDataCompProps> = ({
-  data,
-}) => (
-  <>
-    <h5>Returned Data:</h5>
-    <pre>
-      <code>{JSON.stringify(data, null)}</code>
-    </pre>
-  </>
-);
+debugData([{ action: 'open' }]);
 
 interface ReturnData {
   x: number;
@@ -33,21 +14,56 @@ interface ReturnData {
   z: number;
 }
 
-const App: React.FC = () => {
+const MOCK_CLIENT_DATA: ReturnData = { x: 500, y: 300, z: 200 };
+
+function ReturnClientDataComp({ data }: { data: unknown }) {
+  return (
+    <>
+      <h5>Returned Data:</h5>
+      <pre>
+        <code>{JSON.stringify(data, null, 2)}</code>
+      </pre>
+    </>
+  );
+}
+
+export default function App() {
+  const { visible, setVisible } = useVisibility();
   const [clientData, setClientData] = useState<ReturnData | null>(null);
 
-  const handleGetClientData = () => {
-    fetchNui<ReturnData>("getClientData")
-      .then((retData) => {
-        console.log("Got return data from client scripts:");
-        console.dir(retData);
-        setClientData(retData);
-      })
-      .catch((e) => {
-        console.error("Setting mock data due to error", e);
-        setClientData({ x: 500, y: 300, z: 200 });
-      });
+  useEffect(() => {
+    if (!visible) return;
+
+    const keyHandler = (event: KeyboardEvent) => {
+      if (!['Backspace', 'Escape'].includes(event.code)) return;
+
+      if (isEnvBrowser()) {
+        setVisible(false);
+        return;
+      }
+
+      fetchNui(NUI_CALLBACKS.HIDE_FRAME);
+    };
+
+    window.addEventListener('keydown', keyHandler);
+    return () => window.removeEventListener('keydown', keyHandler);
+  }, [setVisible, visible]);
+
+  const handleGetClientData = async () => {
+    const retData = await fetchNui<ReturnData>(
+      NUI_CALLBACKS.GET_CLIENT_DATA,
+      undefined,
+      MOCK_CLIENT_DATA,
+    );
+
+    console.log('Got return data from client scripts:');
+    console.dir(retData);
+    setClientData(retData);
   };
+
+  if (!visible) {
+    return null;
+  }
 
   return (
     <div className="nui-wrapper">
@@ -55,12 +71,12 @@ const App: React.FC = () => {
         <div>
           <h1>This is the NUI Popup!</h1>
           <p>Exit with the escape key</p>
-          <button onClick={handleGetClientData}>Get Client Data</button>
+          <button type="button" onClick={handleGetClientData}>
+            Get Client Data
+          </button>
           {clientData && <ReturnClientDataComp data={clientData} />}
         </div>
       </div>
     </div>
   );
-};
-
-export default App;
+}
